@@ -6,7 +6,8 @@
         funnyqt.pmatch
         funnyqt.query
         funnyqt.in-place)
-  (:require [funnyqt.visualization :as viz]))
+  (:require [funnyqt.visualization :as viz])
+  (:import (org.eclipse.emf.ecore.util EcoreUtil)))
 
 ;;* Load the metamodel and model
 
@@ -174,6 +175,13 @@
           (or (iteratively #(enter-task %) model)
               (choose all-rules model)))
     (recur model)))
+
+;;* State space exploration
+
+(defn copy-model [model]
+  (let [copied-els (EcoreUtil/copyAll (econtents model))]
+    (doto (new-model)
+      (eaddall! copied-els))))
 
 #_(do
   (instantiate-process model)
