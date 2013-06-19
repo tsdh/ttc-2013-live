@@ -3,7 +3,6 @@
   (:use funnyqt.protocols
         funnyqt.emf
         funnyqt.query.emf
-        funnyqt.pmatch
         funnyqt.query
         funnyqt.in-place)
   (:require [funnyqt.visualization :as viz])
@@ -20,10 +19,14 @@
 
 ;;** Helpers
 
-(defn start-event [proc]
+(defn start-event
+  "Gets the StartEvent of proc."
+  [proc]
   (the (reachables proc [p-seq [p-+ <>--] [p-restr 'StartEvent]])))
 
-(defn end-event [proc]
+(defn end-event
+  "Gets the EndEvent of proc."
+  [proc]
   (the (reachables proc [p-seq [p-+ <>--] [p-restr 'EndEvent]])))
 
 (defn running? [proc-inst]
@@ -41,6 +44,14 @@
 
 (defn show []
   (viz/print-model model ".gtk"))
+
+(defn matches? [model rule]
+  (let [m (atom false)]
+    (binding [*on-matched-rule-fn* (fn [& args]
+                                     (swap! m (constantly true))
+                                     false)]
+      (rule model))
+    @m))
 
 ;;** Process instantiation
 
@@ -89,11 +100,6 @@
   (set-token! t ee))
 
 ;;** Entering and leaving Tasks
-
-(defpattern enter-task-pattern [m]
-  [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
-   -<element>-> sf<SequenceFlow> -<targetRef>-> tsk<Task>
-   :when (running? pi)])
 
 (defrule ^:debug enter-task [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
@@ -149,15 +155,6 @@
                 enter-task leave-task
                 enter-parallel-gateway leave-parallel-gateway])
 
-(defn wanna-run? [rule args match]
-  (println (format "Rule %s is applicable with match: %s" rule match))
-  (println "Wanna execute it? (y/n)")
-  ;; Scanner sc = new Scanner(System.in);
-  ;; int i = sc.nextInt();
-  (let [s (java.util.Scanner. *in*)
-        answer (.next s)]
-    (= answer "y")))
-
 (defn print-rule-name [r args match]
   (println "executing" r)
   true)
@@ -167,8 +164,21 @@
     (iteratively #(choose all-rules %) model)))
 
 (defn execute-interactively [model]
-  (binding [*on-matched-rule-fn* wanna-run?]
-    (execute-randomly model)))
+  (let [matching-rules (vec (filter (partial matches? model) all-rules))]
+    (if (seq matching-rules)
+      (do
+        (println "These rules match:")
+        (dotimes [i (count matching-rules)]
+          (println (format "  %s. %s" i (matching-rules i))))
+        (println "Select one: ")
+        (let [s (java.util.Scanner. *in*)
+              answer (loop [x (.nextInt s)]
+                       (if (or (< x 0) (>= x (count matching-rules)))
+                         (recur (.nextInt s))
+                         x))]
+          ((matching-rules answer) model))
+        (recur model))
+      (println "No rule matches anymore.  Finished!"))))
 
 (defn execute-prioritized [model]
   (when (binding [*on-matched-rule-fn* print-rule-name]
@@ -178,29 +188,5 @@
 
 ;;* State space exploration
 
-(defn copy-model [model]
-  (let [copied-els (EcoreUtil/copyAll (econtents model))]
-    (doto (new-model)
-      (eaddall! copied-els))))
-
-#_(do
-  (instantiate-process model)
-  (start-process model)
-  (enter-task model)
-  (leave-task model)
-  (enter-parallel-gateway model)
-  (leave-parallel-gateway model)
-  (enter-task model)
-  (enter-task model)
-  (leave-task model)
-  (leave-task model)
-  (enter-parallel-gateway model)
-  (leave-parallel-gateway model)
-  (enter-task model)
-  (leave-task model)
-  (end-process model)
-  (terminate-normally model)
-  (show))
-
-;(viz/print-model model ".gtk")
-
+;; I've given up on this since I'd need to build the complete machinery needed
+;; for that from scratch... :-(
