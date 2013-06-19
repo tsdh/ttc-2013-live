@@ -4,4 +4,4 @@
   :license {:name "GNU General Public License v3 (or later)"
             :url "http://www.gnu.org/licenses/gpl.html"}
   :dependencies [[org.clojure/clojure "1.5.1"]
-                 [funnyqt "0.4.28"]])
+                 [funnyqt "0.4.30"]])
