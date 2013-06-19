@@ -20,32 +20,40 @@
 ;;** Helpers
 
 (defn start-event
-  "Gets the StartEvent of proc."
+  "Gets the StartEvent of Process proc."
   [proc]
   (the (reachables proc [p-seq [p-+ <>--] [p-restr 'StartEvent]])))
 
 (defn end-event
-  "Gets the EndEvent of proc."
+  "Gets the EndEvent of Process proc."
   [proc]
   (the (reachables proc [p-seq [p-+ <>--] [p-restr 'EndEvent]])))
 
-(defn running? [proc-inst]
+(defn running?
+  "Returns true iff the ProcessInstance proc-inst is in the RUNNING state."
+  [proc-inst]
   (= (eget proc-inst :state)
      (eenum-literal 'ProcessState.RUNNING)))
 
-(defn set-token! [t el]
+(defn set-token!
+  "Sets the Token t to FlowElement el."
+  [t el]
   (eset! t :element el))
 
-(defn get-token [pi el]
-  (the (filter #(= (eget % :element) el) (eget pi :tokens))))
+(defn get-token
+  "Gets the Token that's currently attached to el.
+  If there's none, nil is returned."
+  [pi el]
+  (first (filter #(= (eget % :element) el) (eget pi :tokens))))
 
-(defn has-token? [pi el]
-  (exists? #(= (eget % :element) el) (eget pi :tokens)))
-
-(defn show []
+(defn show
+  "Visualizes the model."
+  []
   (viz/print-model model ".gtk"))
 
-(defn matches? [model rule]
+(defn matches?
+  "Returns true if the given rule is applicable on the given model right now."
+  [model rule]
   (let [m (atom false)]
     (binding [*on-matched-rule-fn* (fn [& args]
                                      (swap! m (constantly true))
@@ -55,7 +63,14 @@
 
 ;;** Process instantiation
 
-(defrule ^:debug instantiate-process [m]
+(defrule ^:debug instantiate-process
+  "Matches a Process that
+    1. has no or only TimerEventDefinitions
+    2. has not been executed already
+
+  and then creates a new ProcessInstance with Token targeting the Process's
+  StartEvent.  The ProcessInstance gets the state RUNNING."
+  [m]
   [p<Process>
    :let [se (start-event p)
          event-defs (eget se :eventDefinitions)]
@@ -70,7 +85,12 @@
     (eset! pi :state (eenum-literal 'ProcessState.RUNNING))
     (set-token! t se)))
 
-(defrule ^:debug terminate-normally [m]
+(defrule ^:debug terminate-normally
+  "Matches a RUNNING ProcessInstance whose Tokens all either point to the
+  Processes' EndEvent or all point to FlowNodes without outgoing
+  SequenceFlows.
+  It then deletes all tokens and sets the ProcessInstance state to FINISHED."
+  [m]
   [pi<ProcessInstance>
    :when (running? pi)
    :let [p (eget pi :process)
@@ -86,14 +106,20 @@
 
 ;;** Starting and ending
 
-(defrule ^:debug start-process [m]
+(defrule ^:debug start-process
+  "Matches a RUNNING ProcessInstance whose token points to a StartEvent.
+  It then moves the token to the outgoing SequenceFlow."
+  [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
    -<element>-> se<StartEvent>
-   pi -<process>-> p<Process>
    :when (running? pi)]
   (set-token! t (first (eget se :outgoing))))
 
-(defrule ^:debug end-process [m]
+(defrule ^:debug end-process
+  "Matches a RUNNING ProcessInstance whose token points to a SequenceFlow
+  ending in an EndEvent.
+  It then moves the token to the EndEvent."
+  [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
    -<element>-> sf<SequenceFlow> -<targetRef>-> ee<EndEvent>
    :when (running? pi)]
@@ -101,15 +127,22 @@
 
 ;;** Entering and leaving Tasks
 
-(defrule ^:debug enter-task [m]
+(defrule ^:debug enter-task
+  "Matches a RUNNING ProcessInstance whose token points to a SequenceFlow
+  ending in a Task.
+  It then moves the token to the Task."
+  [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
    -<element>-> sf<SequenceFlow> -<targetRef>-> tsk<Task>
-   :when (running? pi)
-   ;;:call [[pi t sf tsk] (enter-task-pattern m)]
-   ]
+   :when (running? pi)]
   (set-token! t tsk))
 
-(defrule ^:debug leave-task [m]
+(defrule ^:debug leave-task
+  "Matches a RUNNING ProcessInstance whose token points to a Task.
+  This Task needs to have at least one outgoing SequenceFlow.
+  It then deletes the Token and creates a new Token attached to each
+  of those outgoing SequenceFlows."
+  [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
    -<element>-> tsk<Task>
    :let [osfs (eget tsk :outgoing)]
@@ -123,12 +156,18 @@
 
 ;;** Parallel gateways
 
-(defrule ^:debug enter-parallel-gateway [m]
+(defrule ^:debug enter-parallel-gateway
+  "Matches a RUNNING ProcessInstance whose token points to a SequenceFlow that
+  targets a ParallelGateway, and where all other SequenceFlows targeting this
+  ParallelGateway also have tokens.
+  It then deletes all tokens and creates a new Token targeting the
+  ParallelGateway."
+  [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
    -<element>-> sf<SequenceFlow> -<targetRef>-> pg<ParallelGateway>
    :let [isfs (eget pg :incoming)]
    :when (and (running? pi)
-              (forall? (partial has-token? pi) isfs))]
+              (forall? (partial get-token pi) isfs))]
   (doseq [isf isfs
           :let [t (get-token pi isf)]]
     (edelete! t))
@@ -136,7 +175,12 @@
     (eadd! pi :tokens t)
     (set-token! t pg)))
 
-(defrule ^:debug leave-parallel-gateway [m]
+(defrule ^:debug leave-parallel-gateway
+  "Matches a RUNNING ProcessInstance whose token targets a ParallelGateway
+  with at least one outgoing SequenceFlow.
+  It then deletes the token and creates one new Token for each outgoing
+  SequenceFlow (targeting that)."
+  [m]
   [pi<ProcessInstance> -<tokens>-> t<bpmn20exec.Token>
    -<element>-> pg<ParallelGateway> -<outgoing>-> sf<SequenceFlow>
    :let [osfs (eget pg :outgoing)]
@@ -159,11 +203,17 @@
   (println "executing" r)
   true)
 
-(defn execute-randomly [model]
+(defn execute-randomly
+  "Iteratively randomly chooses some applicable rule and executes that until
+  there's no applicable rule anymore."
+  [model]
   (binding [*on-matched-rule-fn* print-rule-name]
     (iteratively #(choose all-rules %) model)))
 
-(defn execute-interactively [model]
+(defn execute-interactively
+  "Iteratively prints applicable rules and lets the user decide which one to
+  choose."
+  [model]
   (let [matching-rules (vec (filter (partial matches? model) all-rules))]
     (if (seq matching-rules)
       (do
@@ -180,7 +230,10 @@
         (recur model))
       (println "No rule matches anymore.  Finished!"))))
 
-(defn execute-prioritized [model]
+(defn execute-prioritized
+  "Pretty much like execute-randomly (which see), but prioritizes the
+  enter-task rule."
+  [model]
   (when (binding [*on-matched-rule-fn* print-rule-name]
           (or (iteratively #(enter-task %) model)
               (choose all-rules model)))
