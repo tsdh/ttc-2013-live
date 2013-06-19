@@ -239,6 +239,27 @@
               (choose all-rules model)))
     (recur model)))
 
+;; That's one sequence of rule applications that executes the example process.
+#_(do
+  (instantiate-process model)
+  (start-process model)
+  (enter-task model)
+  (leave-task model)
+  (enter-parallel-gateway model)
+  (leave-parallel-gateway model)
+  (show)
+  (enter-task model)
+  (enter-task model)
+  (leave-task model)
+  (leave-task model)
+  (enter-parallel-gateway model)
+  (leave-parallel-gateway model)
+  (enter-task model)
+  (leave-task model)
+  (end-process model)
+  (terminate-normally model)
+  (show))
+
 ;;* State space exploration
 
 ;; I've given up on this since I'd need to build the complete machinery needed
